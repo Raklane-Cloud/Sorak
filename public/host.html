@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Host — Sorak</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="wrap wide">
+    <div class="topbar">
+      <a class="brand" href="/">sorak<span>.</span></a>
+      <span class="status" id="status">Connecting…</span>
+    </div>
+
+    <div id="denied" class="card" hidden>
+      <h2>Host access needed</h2>
+      <p>This device doesn't have the host key for this session. Open the host link you got when you created it.</p>
+      <a class="btn" id="as-audience">Join as audience instead</a>
+    </div>
+
+    <div id="panel" hidden>
+      <header style="margin-bottom:16px">
+        <h1 class="title" id="title">&nbsp;</h1>
+        <p class="sub">Audience joins at <a id="join-link" target="_blank"></a> with code <span class="code-chip" id="code"></span></p>
+      </header>
+
+      <div class="links" style="margin-bottom:16px">
+        <a class="btn primary" id="present-link" target="_blank">Open presenter screen ↗</a>
+        <button class="btn" id="copy-join">Copy audience link</button>
+        <button class="btn" id="copy-host">Copy host link</button>
+      </div>
+
+      <div class="grid-2">
+        <div>
+          <section class="card">
+            <h2>New poll</h2>
+            <form id="new-poll" class="stack">
+              <input class="field" name="question" maxlength="200" placeholder="Question" aria-label="Poll question" required>
+              <div id="opts" class="stack"></div>
+              <div class="row" style="justify-content:space-between">
+                <button type="button" class="btn small" id="add-opt">+ Option</button>
+                <div class="row">
+                  <button type="submit" class="btn" name="draft">Save</button>
+                  <button type="submit" class="btn primary" name="live">Save &amp; show</button>
+                </div>
+              </div>
+              <p class="error" id="poll-error"></p>
+            </form>
+          </section>
+
+          <section class="card">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <h2 style="margin:0">Polls</h2>
+              <button class="btn small" id="hide-poll">Hide poll from screen</button>
+            </div>
+            <div id="polls"></div>
+          </section>
+        </div>
+
+        <section class="card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <h2 style="margin:0">Questions <span id="q-count"></span></h2>
+            <div class="seg" id="filter">
+              <button class="on" data-filter="open">Open</button>
+              <button data-filter="answered">Answered</button>
+              <button data-filter="hidden">Hidden</button>
+            </div>
+          </div>
+          <ul class="q-list" id="questions"></ul>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    const code = codeFromPath();
+    const key = hostKey(code);
+    const joinUrl = `${location.origin}/s/${code}`;
+    let state = null;
+    let filter = 'open';
+
+    const host = (method, path, body) => api(method, `/sessions/${code}${path}`, body, { key });
+
+    function addOption(value = '') {
+      const n = $('#opts').children.length;
+      if (n >= 10) return;
+      const input = document.createElement('input');
+      input.className = 'field';
+      input.maxLength = 80;
+      input.placeholder = `Option ${n + 1}`;
+      input.value = value;
+      input.setAttribute('aria-label', `Option ${n + 1}`);
+      $('#opts').appendChild(input);
+    }
+    const resetOptions = () => { $('#opts').innerHTML = ''; addOption(); addOption(); };
+    resetOptions();
+    $('#add-opt').addEventListener('click', () => addOption());
+
+    function renderPolls() {
+      if (!state.polls.length) {
+        $('#polls').innerHTML = '<p class="empty">No polls yet.</p>';
+        return;
+      }
+      $('#polls').innerHTML = [...state.polls].reverse().map((p) => {
+        const active = p.id === state.activePollId;
+        return `<div class="poll-item ${active ? 'active' : ''}">
+          <div><b>${esc(p.question)}</b>
+            ${active ? '<span class="tag good">On screen</span>' : ''}${p.closed ? '<span class="tag">Closed</span>' : ''}</div>
+          <div class="mini-bars">${p.options.map((o) => `
+            <div class="mini-bar"><span class="fill" style="width:${pct(o.votes, p.total)}%"></span>
+              <span>${esc(o.label)}</span><span>${o.votes}</span></div>`).join('')}
+          </div>
+          <div class="q-actions">
+            ${active ? '' : `<button class="btn small" data-act="show" data-id="${p.id}">Show</button>`}
+            <button class="btn small" data-act="${p.closed ? 'reopen' : 'close'}" data-id="${p.id}">${p.closed ? 'Reopen voting' : 'Close voting'}</button>
+            <button class="btn small" data-act="delete" data-id="${p.id}">Delete</button>
+            <span class="muted" style="font-size:.85rem;align-self:center">${p.total} votes</span>
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderQuestions() {
+      const qs = state.questions.filter((q) =>
+        filter === 'hidden' ? q.hidden : filter === 'answered' ? q.answered && !q.hidden : !q.answered && !q.hidden);
+      $('#q-count').textContent = `· ${state.questions.filter((q) => !q.answered && !q.hidden).length} open`;
+      $('#questions').innerHTML = qs.length
+        ? qs.map((q) => renderQuestion(q, {
+            interactive: false,
+            actions: `<div class="q-actions">
+              <button class="btn small" data-q="${q.id}" data-field="answered" data-value="${!q.answered}">${q.answered ? 'Mark open' : 'Mark answered'}</button>
+              <button class="btn small" data-q="${q.id}" data-field="hidden" data-value="${!q.hidden}">${q.hidden ? 'Unhide' : 'Hide'}</button>
+            </div>`,
+          })).join('')
+        : '<li class="empty">Nothing here.</li>';
+    }
+
+    function render(next) {
+      state = next;
+      document.title = `Host: ${state.title} — Sorak`;
+      $('#title').textContent = state.title;
+      $('#hide-poll').disabled = !state.activePollId;
+      renderPolls();
+      renderQuestions();
+    }
+
+    // The live stream carries the public state; when its version moves,
+    // fetch the full host view (drafts, hidden questions).
+    let lastVersion = null;
+    let inflight = false;
+    let again = false;
+    async function reload() {
+      if (inflight) { again = true; return; }
+      inflight = true;
+      try {
+        render(await host('GET', '/host'));
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        inflight = false;
+        if (again) { again = false; reload(); }
+      }
+    }
+    async function act(fn) {
+      try { await fn(); await reload(); } catch (err) { toast(err.message); }
+    }
+
+    $('#new-poll').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const options = [...$('#opts').querySelectorAll('input')].map((i) => i.value).filter((v) => v.trim());
+      try {
+        await host('POST', '/polls', { question: form.question.value, options, activate: e.submitter?.name === 'live' });
+        form.question.value = '';
+        resetOptions();
+        $('#poll-error').textContent = '';
+        await reload();
+      } catch (err) {
+        $('#poll-error').textContent = err.message;
+      }
+    });
+
+    $('#polls').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-act]');
+      if (!btn) return;
+      const id = btn.dataset.id;
+      const actions = {
+        show: () => host('POST', `/polls/${id}/activate`),
+        close: () => host('POST', `/polls/${id}/closed`, { closed: true }),
+        reopen: () => host('POST', `/polls/${id}/closed`, { closed: false }),
+        delete: () => confirm('Delete this poll and its votes?') && host('DELETE', `/polls/${id}`),
+      };
+      act(actions[btn.dataset.act]);
+    });
+
+    $('#hide-poll').addEventListener('click', () => act(() => host('POST', '/deactivate')));
+
+    $('#questions').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-q]');
+      if (!btn) return;
+      act(() => host('PATCH', `/questions/${btn.dataset.q}`, { [btn.dataset.field]: btn.dataset.value === 'true' }));
+    });
+
+    $('#filter').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-filter]');
+      if (!btn) return;
+      filter = btn.dataset.filter;
+      for (const b of $('#filter').children) b.classList.toggle('on', b === btn);
+      if (state) renderQuestions();
+    });
+
+    const copy = (text, label) =>
+      navigator.clipboard?.writeText(text).then(() => toast(`${label} copied`), () => prompt(label, text))
+        ?? prompt(label, text);
+    $('#copy-join').addEventListener('click', () => copy(joinUrl, 'Audience link'));
+    $('#copy-host').addEventListener('click', () => copy(`${location.origin}/s/${code}/host#key=${key}`, 'Host link (keep it private)'));
+
+    async function start() {
+      $('#as-audience').href = `/s/${code}`;
+      if (!key) { $('#denied').hidden = false; return; }
+      try {
+        render(await host('GET', '/host'));
+      } catch (err) {
+        if (err.status === 404) return location.replace('/404');
+        $('#denied').hidden = false;
+        return;
+      }
+      $('#panel').hidden = false;
+      $('#code').textContent = code;
+      $('#join-link').href = joinUrl;
+      $('#join-link').textContent = joinUrl.replace(/^https?:\/\//, '');
+      $('#present-link').href = `/s/${code}/present`;
+      live(code, (pub) => {
+        if (pub.version !== lastVersion) { lastVersion = pub.version; reload(); }
+      }, $('#status'));
+    }
+    start();
+  </script>
+</body>
+</html>

@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Present — Sorak</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body class="present">
+  <div class="present-wrap">
+    <header class="present-head">
+      <div>
+        <h1 class="title" id="title" style="font-size:clamp(1.4rem,2.6vw,2.4rem)">&nbsp;</h1>
+        <div class="join">Join at <b id="join-host"></b> · code <span class="code-chip" id="code"></span></div>
+      </div>
+      <img id="qr-small" alt="QR code to join" hidden>
+    </header>
+    <main id="main"></main>
+  </div>
+  <button class="btn small corner" id="fs">Fullscreen</button>
+
+  <script src="/app.js"></script>
+  <script>
+    const code = codeFromPath();
+    const joinUrl = `${location.host}/s/${code}`;
+    const qr = `/api/sessions/${code}/qr.svg`;
+    $('#code').textContent = code;
+    $('#join-host').textContent = joinUrl;
+    $('#qr-small').src = qr;
+
+    function render(state) {
+      document.title = `${state.title} — Sorak`;
+      $('#title').textContent = state.title;
+      const poll = state.activePoll;
+      const top = state.questions.filter((q) => !q.answered).slice(0, 5);
+
+      if (!poll && !top.length) {
+        $('#qr-small').hidden = true;
+        $('#main').className = 'present-idle';
+        $('#main').innerHTML = `<div>
+          <h1>Scan to join</h1>
+          <p class="muted" style="font-size:clamp(1rem,2vw,1.6rem)">or go to <b>${esc(joinUrl)}</b></p>
+          <img src="${qr}" alt="QR code to join">
+        </div>`;
+        return;
+      }
+
+      $('#qr-small').hidden = false;
+      $('#main').className = `present-main ${poll && top.length ? 'both' : ''}`;
+      $('#main').innerHTML = `
+        ${poll ? `<section>
+          <p class="poll-q">${esc(poll.question)}</p>
+          <div class="options">${renderOptions(poll, { reveal: true })}</div>
+          <p class="poll-meta">${poll.total} vote${poll.total === 1 ? '' : 's'}${poll.closed ? ' · Voting closed' : ''}</p>
+        </section>` : ''}
+        ${top.length ? `<section class="card">
+          <h2>Top questions</h2>
+          <ul class="q-list">${top.map((q) => renderQuestion(q, { interactive: false })).join('')}</ul>
+        </section>` : ''}`;
+    }
+
+    $('#fs').addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen?.();
+    });
+
+    api('GET', `/sessions/${code}`)
+      .then((s) => { render(s); live(code, render); })
+      .catch((err) => (err.status === 404 ? location.replace('/404') : toast(err.message)));
+  </script>
+</body>
+</html>

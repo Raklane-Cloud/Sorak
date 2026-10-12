@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Join — Sorak</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="wrap">
+    <div class="topbar">
+      <a class="brand" href="/">sorak<span>.</span></a>
+      <span class="status" id="status">Connecting…</span>
+    </div>
+
+    <header style="margin-bottom:18px">
+      <h1 class="title" id="title">&nbsp;</h1>
+      <p class="sub">Session <span class="code-chip" id="code"></span></p>
+    </header>
+
+    <section class="card" id="poll-card">
+      <h2>Poll</h2>
+      <div id="poll"><p class="empty">Waiting for the host to start a poll…</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Ask a question</h2>
+      <form id="ask" class="stack">
+        <textarea class="field" name="body" maxlength="280" placeholder="Type your question" aria-label="Your question" required></textarea>
+        <div class="row">
+          <input class="field" name="author" maxlength="40" placeholder="Your name (optional)" aria-label="Your name">
+          <button class="btn primary">Send</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <h2 style="margin:0">Questions <span id="q-count"></span></h2>
+        <div class="seg" id="sort">
+          <button class="on" data-sort="top">Top</button>
+          <button data-sort="new">New</button>
+        </div>
+      </div>
+      <ul class="q-list" id="questions"></ul>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    const code = codeFromPath();
+    $('#code').textContent = code;
+
+    const myVotes = store.get(`sorak:votes:${code}`, {}); // pollId -> optionId
+    const myUpvotes = new Set(store.get(`sorak:upvotes:${code}`, []));
+    let state = null;
+    let sort = 'top';
+
+    function renderPoll() {
+      const poll = state.activePoll;
+      if (!poll) {
+        $('#poll').innerHTML = '<p class="empty">Waiting for the host to start a poll…</p>';
+        return;
+      }
+      const mine = myVotes[poll.id];
+      const reveal = Boolean(mine) || poll.closed;
+      $('#poll').innerHTML = `
+        <p class="poll-q">${esc(poll.question)}</p>
+        <div class="options">${renderOptions(poll, { mine, reveal, onVote: true })}</div>
+        <p class="poll-meta">${poll.total} vote${poll.total === 1 ? '' : 's'}
+          ${poll.closed ? ' · Voting closed' : mine ? ' · Tap another option to change your vote' : ''}</p>`;
+    }
+
+    function renderQuestions() {
+      const qs = [...state.questions];
+      if (sort === 'new') qs.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      $('#q-count').textContent = qs.length ? `· ${qs.length}` : '';
+      $('#questions').innerHTML = qs.length
+        ? qs.map((q) => renderQuestion(q, { upvoted: myUpvotes.has(q.id), interactive: true })).join('')
+        : '<li class="empty">No questions yet. Be the first!</li>';
+    }
+
+    function render(next) {
+      state = next;
+      document.title = `${state.title} — Sorak`;
+      $('#title').textContent = state.title;
+      renderPoll();
+      renderQuestions();
+    }
+
+    $('#poll').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-option]');
+      if (!btn || !state.activePoll) return;
+      const pollId = state.activePoll.id;
+      const optionId = btn.dataset.option;
+      const previous = myVotes[pollId];
+      myVotes[pollId] = optionId;
+      renderPoll();
+      try {
+        await api('POST', `/sessions/${code}/polls/${pollId}/vote`, { optionId });
+        store.set(`sorak:votes:${code}`, myVotes);
+      } catch (err) {
+        if (previous) myVotes[pollId] = previous; else delete myVotes[pollId];
+        renderPoll();
+        toast(err.message);
+      }
+    });
+
+    $('#questions').addEventListener('click', async (e) => {
+      const btn = e.target.closest('[data-upvote]');
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        const { upvoted } = await api('POST', `/sessions/${code}/questions/${btn.dataset.upvote}/upvote`);
+        if (upvoted) myUpvotes.add(btn.dataset.upvote); else myUpvotes.delete(btn.dataset.upvote);
+        store.set(`sorak:upvotes:${code}`, [...myUpvotes]);
+        renderQuestions();
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+
+    $('#ask').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const btn = form.querySelector('button');
+      btn.disabled = true;
+      try {
+        await api('POST', `/sessions/${code}/questions`, { body: form.body.value, author: form.author.value });
+        form.body.value = '';
+        store.set('sorak:name', form.author.value);
+        toast('Question sent');
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        btn.disabled = false;
+      }
+    });
+    $('#ask').author.value = store.get('sorak:name', '');
+
+    $('#sort').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-sort]');
+      if (!btn) return;
+      sort = btn.dataset.sort;
+      for (const b of $('#sort').children) b.classList.toggle('on', b === btn);
+      if (state) renderQuestions();
+    });
+
+    api('GET', `/sessions/${code}`)
+      .then(() => live(code, render, $('#status')))
+      .catch((err) => (err.status === 404 ? location.replace('/404') : toast(err.message)));
+  </script>
+</body>
+</html>

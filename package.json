@@ -1,0 +1,19 @@
+{
+  "name": "sorak",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live polls and Q&A for talks, classes and meetings",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.13.1",
+    "qrcode": "^1.5.4"
+  }
+}

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sorak — live polls &amp; Q&amp;A</title>
+  <meta name="description" content="Free live polls and audience Q&A for talks, classes and meetings. No sign-up.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <main class="wrap">
+    <div class="topbar"><a class="brand" href="/">sorak<span>.</span></a></div>
+
+    <section class="hero">
+      <h1>Let the room <em>speak up.</em></h1>
+      <p>Live polls and audience Q&amp;A for talks, classes and meetings. Your audience joins with a code or QR — no app, no sign-up.</p>
+    </section>
+
+    <div class="card">
+      <h2>Join a session</h2>
+      <form id="join" class="row">
+        <input class="field code-input" name="code" maxlength="6" placeholder="ABC123" autocomplete="off" aria-label="Session code" required>
+        <button class="btn primary">Join</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>Host a session</h2>
+      <form id="create" class="stack">
+        <input class="field" name="title" maxlength="120" placeholder="e.g. Jakarta JS Meetup — October" aria-label="Session title" required>
+        <button class="btn primary">Create session</button>
+        <p class="error" id="create-error"></p>
+      </form>
+      <div id="mine" hidden>
+        <h2 style="margin-top:8px">Your sessions on this device</h2>
+        <div class="links" id="mine-list"></div>
+      </div>
+    </div>
+
+    <div class="features">
+      <div class="card feature"><b>Live polls</b><span class="muted">Results update on every screen as votes come in.</span></div>
+      <div class="card feature"><b>Upvoted Q&amp;A</b><span class="muted">The best questions rise to the top. You moderate.</span></div>
+      <div class="card feature"><b>Presenter view</b><span class="muted">A big-screen view with a join QR code.</span></div>
+    </div>
+  </main>
+
+  <script src="/app.js"></script>
+  <script>
+    $('#join').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const code = e.target.code.value.trim().toUpperCase();
+      if (/^[A-Z0-9]{6}$/.test(code)) location.href = `/s/${code}`;
+      else toast('Codes are 6 letters or numbers');
+    });
+
+    $('#create').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = e.target.querySelector('button');
+      btn.disabled = true;
+      try {
+        const title = e.target.title.value;
+        const { code, hostKey } = await api('POST', '/sessions', { title });
+        const titles = store.get('sorak:titles', {});
+        titles[code] = title;
+        store.set('sorak:titles', titles);
+        location.href = `/s/${code}/host#key=${hostKey}`;
+      } catch (err) {
+        $('#create-error').textContent = err.message;
+        btn.disabled = false;
+      }
+    });
+
+    const keys = store.get('sorak:hostKeys', {});
+    const titles = store.get('sorak:titles', {});
+    const codes = Object.keys(keys).reverse().slice(0, 8);
+    if (codes.length) {
+      $('#mine').hidden = false;
+      $('#mine-list').innerHTML = codes
+        .map((c) => `<a class="btn small" href="/s/${c}/host">${esc(titles[c] || c)}</a>`)
+        .join('');
+    }
+  </script>
+</body>
+</html>
