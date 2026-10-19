@@ -4,7 +4,7 @@ const { pool, migrate } = require('./db');
 const live = require('./live');
 const api = require('./api');
 
-const PORT = 4321;
+const PORT = Number(process.env.PORT || 3000);
 const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const app = express();
